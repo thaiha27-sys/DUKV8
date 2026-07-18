@@ -322,6 +322,16 @@ function go(id){ CUR=id; renderNav(); VIEWS[id](); window.scrollTo(0,0); }
 
 /* ================= GENERIC TABLE ENGINE ================= */
 /* colDefs: [{k,label,type:'text'|'textarea'|'select'|'date',opts,w,render}] */
+function _parseDMY(v){ const m=String(v||'').match(/(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})/); return m?((+m[3])*10000+(+m[2])*100+(+m[1])):0; }
+function _recMonth(v){ const m=String(v||'').match(/(\d{1,2})[\/\-.](\d{4})/); return m?((+m[2])*100+(+m[1])):0; }
+function _recencyKey(r,key){
+  if(key==='m1') return (parseInt(r.nam)||0)*10000+(parseInt(r.thang)||0)*100+(parseInt(r.ngay)||0);
+  if(key==='m2') return _parseDMY(r.ngay);
+  if(key==='m4a') return _recMonth(r.thangQT)|| (parseInt(r.nam)||0)*100;
+  if(key==='m4b') return _recMonth(r.thangBH)||_recMonth(r.thangQT)||(parseInt(r.nam)||0)*100;
+  return 0;
+}
+const _SORTABLE={m1:1,m2:1,m4a:1,m4b:1};
 function tableView(cfg){
   // cfg: {title, sub, dataKey (path in S), cols, filters:[{k,label,getOpts}], searchKeys, kpis(), extraToolbar, rowBadge}
   const el = document.getElementById('content');
@@ -337,6 +347,7 @@ function tableView(cfg){
       const v = state.f[fk];
       if(v) rows = rows.filter(r => cfg.filterMatch && cfg.filterMatch[fk] ? cfg.filterMatch[fk](r,v) : String(r[fk]||'')===v);
     }
+    if(_SORTABLE[cfg.dataKey]) rows.sort((a,b)=>_recencyKey(b,cfg.dataKey)-_recencyKey(a,cfg.dataKey));
     return rows;
   }
   function draw(){
@@ -900,7 +911,7 @@ VIEWS.m6 = function(){
     tableView({ title:'Phân hệ 6 · Chương trình, kế hoạch kiểm tra, giám sát',
       sub:'Toàn khóa 2025–2030 và hàng năm — do Đảng ủy và UBKT Đảng ủy ban hành', dataKey:'m6ct', beforeHTML:tabsHTML,
       cols:[
-        {k:'capbanhanh',label:'Cấp ban hành',type:'select',opts:['Đảng ủy Chi cục','Ủy ban Kiểm tra Đảng ủy'],w:130},
+        {k:'capbanhanh',label:'Cấp / Chủ thể ban hành',type:'select',opts:M6_CHUTHE,w:160},
         {k:'loaicthk',label:'Loại',type:'select',opts:['Chương trình','Kế hoạch'],w:100},
         {k:'phamvi',label:'Phạm vi',type:'select',opts:['Toàn khóa 2025-2030','Năm 2025','Năm 2026','Năm 2027','Năm 2028','Năm 2029','Năm 2030'],w:130},
         {k:'so',label:'Số ký hiệu',w:100},
@@ -908,7 +919,7 @@ VIEWS.m6 = function(){
         {k:'noidung',label:'Trích yếu / Nội dung',type:'textarea',w:320},
         {k:'ghichu',label:'Ghi chú',w:130}
       ],
-      filters:[{k:'capbanhanh',label:'Cấp',getOpts:()=>['Đảng ủy Chi cục','Ủy ban Kiểm tra Đảng ủy']},{k:'phamvi',label:'Phạm vi',getOpts:d=>[...new Set(d.map(r=>r.phamvi).filter(Boolean))]}]
+      filters:[{k:'capbanhanh',label:'Cấp/Chủ thể',getOpts:d=>[...new Set(d.map(r=>r.capbanhanh).filter(Boolean))]},{k:'phamvi',label:'Phạm vi',getOpts:d=>[...new Set(d.map(r=>r.phamvi).filter(Boolean))]}]
     });
   }
   else if(m6Tab==='lich'){ m6LichView(tabsHTML); }
