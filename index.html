@@ -738,6 +738,7 @@ const M2_LOAI_ORDER=['NGHỊ QUYẾT','CHỈ THỊ','KẾT LUẬN','CHƯƠNG TR�
 VIEWS.m2 = function(){
   const cntA=S.m2.filter(r=>String(r.nhiemky||'2025-2030')==='2025-2030').length;
   const cntB=S.m2.filter(r=>String(r.nhiemky||'')==='2020-2025').length;
+  const cntC=S.m2.filter(r=>String(r.nhiemky||'')==='2015-2020').length;
   tableView({
     title:'Phân hệ 2 · Danh mục văn bản đi của Đảng ủy',
     sub:'Đảng ủy Chi cục Hải quan khu vực VIII · “Đang hiệu lực” = nhiệm kỳ 2025–2030; “Lưu trữ” = nhiệm kỳ 2020–2025 (nhập Excel để tra cứu). Cột “Cụ thể hóa VB đến” ghi rõ số, ngày văn bản cấp trên được cụ thể hóa.',
@@ -746,10 +747,11 @@ VIEWS.m2 = function(){
     beforeHTML:()=>`<div class="tabs">
       <button class="${m2NK==='2025-2030'?'active':''}" onclick="m2Go('2025-2030')">Đang hiệu lực · NK 2025–2030 (${cntA})</button>
       <button class="${m2NK==='2020-2025'?'active':''}" onclick="m2Go('2020-2025')">Lưu trữ · NK 2020–2025 (${cntB})</button>
+      <button class="${m2NK==='2015-2020'?'active':''}" onclick="m2Go('2015-2020')">Lưu trữ · NK 2015–2020 (${cntC})</button>
     </div>`,
     extraToolbar:()=>`<button class="btn" onclick="m2ExportTrongTam()" title="Kết xuất danh mục văn bản trọng tâm theo khoảng thời gian, nhóm theo thể loại">★ Xuất DM trọng tâm</button>`,
     cols:[
-      {k:'nhiemky',label:'Nhiệm kỳ',type:'select',opts:['2020-2025','2025-2030'],w:90,render:r=>`<span class="badge ${r.nhiemky==='2025-2030'?'b-red':'b-gray'}">${esc(r.nhiemky||'')}</span>`},
+      {k:'nhiemky',label:'Nhiệm kỳ',type:'select',opts:['2015-2020','2020-2025','2025-2030'],w:95,render:r=>`<span class="badge ${r.nhiemky==='2025-2030'?'b-red':(r.nhiemky==='2020-2025'?'b-navy':'b-gray')}">${esc(r.nhiemky||'')}</span>`},
       {k:'loai',label:'Thể loại',type:'select',opts:['NGHỊ QUYẾT','CHỈ THỊ','KẾT LUẬN','CHƯƠNG TRÌNH','KẾ HOẠCH','QUY CHẾ, QUY ĐỊNH','BÁO CÁO','CÔNG VĂN','THÔNG BÁO','QUYẾT ĐỊNH','TỜ TRÌNH','HƯỚNG DẪN'],w:110},
       {k:'so',label:'Số ký hiệu',w:100},
       {k:'ngay',label:'Ngày ban hành',w:95},
