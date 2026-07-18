@@ -257,9 +257,9 @@ function save(){
 function toast(msg){ const t=document.getElementById('saveToast'); t.textContent=msg||'Đã lưu'; t.classList.add('show'); setTimeout(()=>t.classList.remove('show'),1400); }
 
 /* Ghi 1 thao tác lên Google Sheet (add/update/delete) — chỉ ở chế độ online */
-async function gasWrite(tableKey, op, row, id){
+async function gasWrite(tableKey, op, row, id, silent){
   const table = SHEET_MAP[tableKey]; if(!table) return {ok:true}; // khóa chưa ánh xạ -> bỏ qua
-  if(!ADMIN_PIN){ const nguoi=getProposer(); if(nguoi===null||nguoi==='') return {ok:false}; try{ await fetch(GAS_URL,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({op:'propose',table,target_op:op,row,id,nguoi})}); }catch(e){} toast('Đã gửi đề xuất, chờ quản trị duyệt.'); return {ok:false,proposed:true}; }
+  if(!ADMIN_PIN){ const nguoi=getProposer(); if(nguoi===null||nguoi==='') return {ok:false}; try{ await fetch(GAS_URL,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({op:'propose',table,target_op:op,row,id,nguoi})}); }catch(e){} if(!silent) toast('Đã gửi đề xuất, chờ quản trị duyệt.'); return {ok:false,proposed:true}; }
   try{
     const r = await fetch(GAS_URL, {method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'},
       body: JSON.stringify({pin:ADMIN_PIN, op, table, row, id})});
@@ -399,10 +399,10 @@ function tableView(cfg){
         if(!confirm(`Đã đọc ${records.length} dòng từ Excel. Thêm vào danh mục hiện tại?`)) { inp.value=''; return; }
         const d=getData();
         if(ONLINE() && cfg.dataKey){
-          if(!ADMIN_PIN){ askPin(); if(!ADMIN_PIN){ inp.value=''; return; } }
-          toast('Đang tải lên Google Sheet...');
-          for(const rec of records){ const r=await gasWrite(cfg.dataKey,'add',rec); if(r&&r.ok){ rec._id=r.id; d.push(rec); } }
-          toast(`Đã nhập ${records.length} dòng lên Google Sheet`);
+          toast(ADMIN_PIN?'Đang tải lên Google Sheet...':'Đang gửi đề xuất...');
+          let _ok=0;
+          for(const rec of records){ const r=await gasWrite(cfg.dataKey,'add',rec,null,true); if(r&&r.ok){ rec._id=r.id; d.push(rec); _ok++; } }
+          toast(ADMIN_PIN?`Đã nhập ${_ok}/${records.length} dòng lên Google Sheet`:`Đã gửi ${records.length} dòng vào hàng đợi duyệt`);
         } else {
           records.forEach(rec=>d.push(rec)); save(); toast(`Đã nhập ${records.length} dòng`);
         }
@@ -864,35 +864,88 @@ function m5TabsHTML(){
 function m5Go(t){ m5Tab=t; VIEWS.m5(); }
 
 /* ---- M6: KTGS ---- */
-let m6Tab='ct';
+let m6Tab='dashboard';
 const HOSO_STEPS = [['qd','Quyết định'],['kh','Kế hoạch'],['decuong','Đề cương'],['bcdt','BC đối tượng'],['bienban','Biên bản'],['bckq','BC kết quả'],['tbkl','TB kết luận']];
+const M6_CHUTHE=["Đảng ủy Chi cục","Ủy ban Kiểm tra Đảng ủy","Chi bộ Văn phòng","Chi bộ Phòng Tổ chức cán bộ","Chi bộ Phòng Nghiệp vụ Hải quan","Chi bộ Phòng Quản lý rủi ro","Chi bộ Phòng Công nghệ thông tin","Chi bộ Đội Kiểm soát Hải quan","Chi bộ Đội Phúc tập và Kiểm tra sau thông quan","Chi bộ HQCK quốc tế Móng Cái","Chi bộ HQCK Hoành Mô","Chi bộ HQCK Bắc Phong Sinh","Chi bộ HQCK cảng Vạn Gia","Chi bộ HQCK cảng Hòn Gai","Chi bộ HQCK cảng Cẩm Phả"];
+function m6DashboardView(tabsHTML){
+  const el=document.getElementById('content');
+  const R=(S.m6cuoc||[]); const num=v=>{const n=parseInt(v);return isNaN(n)?0:n;};
+  const done=R.filter(c=>c.trangthai==='Đã hoàn thành');
+  const kt=R.filter(c=>c.loai==='Kiểm tra'), gs=R.filter(c=>c.loai==='Giám sát');
+  const ktD=done.filter(c=>c.loai==='Kiểm tra').length, gsD=done.filter(c=>c.loai==='Giám sát').length;
+  const sTC=done.reduce((a,c)=>a+num(c.sotcd),0), sDV=done.reduce((a,c)=>a+num(c.sodv),0), sCUV=done.reduce((a,c)=>a+num(c.socuv),0);
+  const sent=`Đã hoàn thành ${done.length}/${R.length} cuộc kiểm tra, giám sát (${ktD} cuộc kiểm tra, ${gsD} cuộc giám sát) với ${sDV} đảng viên, ${sTC} tổ chức đảng, trong đó ${sCUV} cấp ủy viên.`;
+  let html=`<div class="page-title">Phân hệ 6 · Tổng hợp kiểm tra, giám sát</div><div class="page-sub">Tự động tổng hợp từ dữ liệu các cuộc KTGS</div>${tabsHTML()}`;
+  html+=`<div class="kpis">
+    <div class="kpi"><div class="v">${R.length}</div><div class="l">Tổng số cuộc KTGS</div></div>
+    <div class="kpi green"><div class="v">${done.length}</div><div class="l">Đã hoàn thành</div></div>
+    <div class="kpi"><div class="v">${kt.length}</div><div class="l">Cuộc kiểm tra (${ktD} xong)</div></div>
+    <div class="kpi gold"><div class="v">${gs.length}</div><div class="l">Cuộc giám sát (${gsD} xong)</div></div>
+    <div class="kpi"><div class="v">${sTC}</div><div class="l">Tổ chức đảng (đã KTGS)</div></div>
+    <div class="kpi"><div class="v">${sDV}</div><div class="l">Đảng viên (đã KTGS)</div></div>
+    <div class="kpi gold"><div class="v">${sCUV}</div><div class="l">Trong đó cấp ủy viên</div></div>
+  </div>`;
+  html+=`<div class="note-banner" style="font-weight:600;color:#1E7D3A">KẾT XUẤT NHANH: ${sent}</div>`;
+  html+=`<div class="tbl-wrap"><table><thead><tr><th class="num">TT</th><th style="min-width:230px">Chủ thể (UBKT & 13 chi bộ)</th><th>Tổng cuộc</th><th>Kiểm tra</th><th>Giám sát</th><th>Đã hoàn thành</th></tr></thead><tbody>`;
+  M6_CHUTHE.forEach((ct,i)=>{ const rr=R.filter(c=>c.chuthe===ct);
+    html+=`<tr><td class="num">${i+1}</td><td>${ct}</td><td>${rr.length}</td><td>${rr.filter(c=>c.loai==='Kiểm tra').length}</td><td>${rr.filter(c=>c.loai==='Giám sát').length}</td><td><span class="badge b-green">${rr.filter(c=>c.trangthai==='Đã hoàn thành').length}</span></td></tr>`; });
+  html+=`</tbody></table></div>`;
+  el.innerHTML=html;
+}
 VIEWS.m6 = function(){
-  const tabs=[['ct','Chương trình KTGS'],['lich','Lịch toàn khóa 2025–2030'],['cuoc','Cuộc KTGS năm 2026'],['kltren','Kết luận cấp trên (5 năm)'],['klda','Kết luận đã thực hiện'],['tiendo','Tiến độ theo chi bộ']];
-  const tabsHTML = ()=>`<div class="tabs">${tabs.map(([k,l])=>`<button class="${m6Tab===k?'active':''}" onclick="m6Go('${k}')">${l}</button>`).join('')}</div>`;
-  if(m6Tab==='ct'){
-    tableView({
-      title:'Phân hệ 6 · Kiểm tra, giám sát, kỷ luật Đảng',
-      sub:'Chương trình KTGS toàn khóa 2025–2030 và hàng năm — do Đảng ủy và UBKT Đảng ủy ban hành',
-      dataKey:'m6ct', beforeHTML:tabsHTML,
+  const tabs=[['dashboard','Tổng hợp KTGS'],['ct','Chương trình / Kế hoạch'],['lich','Lịch toàn khóa 2025–2030'],['cuoc','Cuộc kiểm tra, giám sát'],['kltren','Kết luận cấp trên'],['klda','Kết luận đã thực hiện']];
+  const tabsHTML=()=>`<div class="tabs">${tabs.map(([k,l])=>`<button class="${m6Tab===k?'active':''}" onclick="m6Go('${k}')">${l}</button>`).join('')}</div>`;
+  if(m6Tab==='dashboard'){ m6DashboardView(tabsHTML); }
+  else if(m6Tab==='ct'){
+    tableView({ title:'Phân hệ 6 · Chương trình, kế hoạch kiểm tra, giám sát',
+      sub:'Toàn khóa 2025–2030 và hàng năm — do Đảng ủy và UBKT Đảng ủy ban hành', dataKey:'m6ct', beforeHTML:tabsHTML,
       cols:[
-        {k:'capbanhanh',label:'Cấp ban hành',type:'select',opts:['Đảng ủy','UBKT Đảng ủy'],w:120,render:r=>`<span class="badge ${r.capbanhanh==='Đảng ủy'?'b-navy':'b-gold'}">${esc(r.capbanhanh)}</span>`},
-        {k:'loai',label:'Phạm vi',type:'select',opts:['Toàn khóa 2025-2030','Năm 2025','Năm 2026','Năm 2027','Năm 2028','Năm 2029','Năm 2030'],w:130},
+        {k:'capbanhanh',label:'Cấp ban hành',type:'select',opts:['Đảng ủy Chi cục','Ủy ban Kiểm tra Đảng ủy'],w:130},
+        {k:'loaicthk',label:'Loại',type:'select',opts:['Chương trình','Kế hoạch'],w:100},
+        {k:'phamvi',label:'Phạm vi',type:'select',opts:['Toàn khóa 2025-2030','Năm 2025','Năm 2026','Năm 2027','Năm 2028','Năm 2029','Năm 2030'],w:130},
         {k:'so',label:'Số ký hiệu',w:100},
         {k:'ngay',label:'Ngày ban hành',w:95},
-        {k:'noidung',label:'Nội dung chương trình',type:'textarea',w:320},
+        {k:'noidung',label:'Trích yếu / Nội dung',type:'textarea',w:320},
         {k:'ghichu',label:'Ghi chú',w:130}
       ],
-      filters:[{k:'capbanhanh',label:'Cấp ban hành',getOpts:()=>['Đảng ủy','UBKT Đảng ủy']},{k:'loai',label:'Phạm vi',getOpts:d=>[...new Set(d.map(r=>r.loai))]}]
+      filters:[{k:'capbanhanh',label:'Cấp',getOpts:()=>['Đảng ủy Chi cục','Ủy ban Kiểm tra Đảng ủy']},{k:'phamvi',label:'Phạm vi',getOpts:d=>[...new Set(d.map(r=>r.phamvi).filter(Boolean))]}]
     });
-  } else if(m6Tab==='lich'){
-    m6LichView(tabsHTML);
-  } else if(m6Tab==='cuoc'){
-    m6CuocView(tabsHTML);
-  } else if(m6Tab==='kltren'){
-    tableView({
-      title:'Phân hệ 6 · Kết luận của cấp trên đối với Đảng ủy (5 năm gần đây)',
-      sub:'Theo dõi kết luận kiểm tra, giám sát của Tỉnh ủy, UBKT Tỉnh ủy, Đảng ủy UBND tỉnh, UBKT Đảng ủy UBND tỉnh đối với Đảng ủy Chi cục',
-      dataKey:'m6kltren', beforeHTML:tabsHTML,
+  }
+  else if(m6Tab==='lich'){ m6LichView(tabsHTML); }
+  else if(m6Tab==='cuoc'){
+    tableView({ title:'Phân hệ 6 · Các cuộc kiểm tra, giám sát',
+      sub:'UBKT Đảng ủy và 13 chi bộ nhập (thêm/sửa/xóa hoặc Nhập Excel). Người không phải quản trị: thao tác sẽ gửi đề xuất chờ duyệt.', dataKey:'m6cuoc', beforeHTML:tabsHTML,
+      cols:[
+        {k:'chuthe',label:'Chủ thể',type:'select',opts:M6_CHUTHE,w:150},
+        {k:'loai',label:'Loại',type:'select',opts:['Kiểm tra','Giám sát'],w:90,render:r=>`<span class="badge ${r.loai==='Kiểm tra'?'b-red':'b-gold'}">${esc(r.loai)}</span>`},
+        {k:'kymoc',label:'Kỳ/Mốc',w:90},
+        {k:'cancu',label:'Căn cứ (số-ngày CTr/KH)',w:150},
+        {k:'soqd',label:'Số QĐ đoàn',w:100},
+        {k:'ngayqd',label:'Ngày QĐ',w:85},
+        {k:'truongdoan',label:'Trưởng đoàn',w:120},
+        {k:'sokh',label:'Số KH (nếu có)',w:100},
+        {k:'ngaykh',label:'Ngày KH',w:85},
+        {k:'noidung',label:'Nội dung kiểm tra/giám sát',type:'textarea',w:250},
+        {k:'doituong',label:'Đối tượng cụ thể',type:'textarea',w:200},
+        {k:'loaidt',label:'Loại đối tượng',type:'select',opts:['Tổ chức đảng','Đảng viên','Tổ chức đảng và đảng viên'],w:130},
+        {k:'sotcd',label:'Số tổ chức đảng',w:80},
+        {k:'sodv',label:'Số đảng viên',w:80},
+        {k:'socuv',label:'Trong đó cấp ủy viên',w:90},
+        {k:'tungay',label:'Từ ngày',w:85},
+        {k:'denngay',label:'Đến ngày',w:85},
+        {k:'sokl',label:'Số kết luận/KQ',w:110},
+        {k:'ngaykl',label:'Ngày kết luận',w:90},
+        {k:'ketqua',label:'Kết quả/Kết luận tóm tắt',type:'textarea',w:220},
+        {k:'trangthai',label:'Trạng thái',type:'select',opts:['Chưa tiến hành','Đang tiến hành','Đã hoàn thành'],w:120,render:r=>{const m={'Đã hoàn thành':'b-green','Đang tiến hành':'b-amber','Chưa tiến hành':'b-gray'};return `<span class="badge ${m[r.trangthai]||'b-gray'}">${esc(r.trangthai||'—')}</span>`}},
+        {k:'ghichu',label:'Ghi chú',w:120}
+      ],
+      filters:[{k:'chuthe',label:'Chủ thể',getOpts:d=>[...new Set(d.map(r=>r.chuthe).filter(Boolean))]},{k:'loai',label:'Loại',getOpts:()=>['Kiểm tra','Giám sát']},{k:'trangthai',label:'Trạng thái',getOpts:()=>['Chưa tiến hành','Đang tiến hành','Đã hoàn thành']}],
+      searchKeys:['chuthe','noidung','doituong','soqd','truongdoan','sokl']
+    });
+  }
+  else if(m6Tab==='kltren'){
+    tableView({ title:'Phân hệ 6 · Kết luận của cấp trên đối với Đảng ủy',
+      sub:'Kết luận KTGS của Tỉnh ủy, UBKT Tỉnh ủy, Đảng ủy UBND tỉnh, UBKT Đảng ủy UBND tỉnh đối với Đảng ủy Chi cục', dataKey:'m6kltren', beforeHTML:tabsHTML,
       cols:[
         {k:'nam',label:'Năm',type:'select',opts:['2022','2023','2024','2025','2026'],w:60},
         {k:'coquan',label:'Cơ quan kết luận',w:160},
@@ -903,22 +956,19 @@ VIEWS.m6 = function(){
       ],
       filters:[{k:'nam',label:'Năm',getOpts:d=>[...new Set(d.map(r=>r.nam).filter(Boolean))].sort()}]
     });
-  } else if(m6Tab==='klda'){
-    tableView({
-      title:'Phân hệ 6 · Kết luận các cuộc KTGS đã thực hiện',
-      sub:'Số, ngày kết luận và kết quả thực hiện kết luận của các chi bộ được kiểm tra, giám sát',
-      dataKey:'m6klda', beforeHTML:tabsHTML,
+  }
+  else if(m6Tab==='klda'){
+    tableView({ title:'Phân hệ 6 · Kết luận các cuộc KTGS đã thực hiện',
+      sub:'Số, ngày kết luận và kết quả thực hiện kết luận của các chi bộ được kiểm tra, giám sát', dataKey:'m6klda', beforeHTML:tabsHTML,
       cols:[
         {k:'so',label:'Số / ngày kết luận',w:150},
-        {k:'chibo',label:'Chi bộ',type:'select',opts:SEED.chibo13,w:170},
+        {k:'chibo',label:'Chi bộ',type:'select',opts:(typeof SEED!=='undefined'&&SEED.chibo13)?SEED.chibo13:M6_CHUTHE.slice(2),w:170},
         {k:'noidung',label:'Nội dung kết luận',type:'textarea',w:300},
         {k:'ketqua',label:'Kết quả thực hiện của chi bộ',type:'textarea',w:260},
         {k:'trangthai',label:'Trạng thái',type:'select',opts:['Đang thực hiện','Hoàn thành','Quá hạn'],w:110,render:r=>{const m={'Hoàn thành':'b-green','Đang thực hiện':'b-amber','Quá hạn':'b-red'};return `<span class="badge ${m[r.trangthai]||'b-gray'}">${esc(r.trangthai||'—')}</span>`}}
       ],
       filters:[{k:'chibo',label:'Chi bộ',getOpts:d=>[...new Set(d.map(r=>r.chibo).filter(Boolean))]}]
     });
-  } else {
-    m6TienDoView(tabsHTML);
   }
 };
 function m6Go(t){ m6Tab=t; VIEWS.m6(); }
