@@ -199,7 +199,8 @@ const SHEET_MAP = {
   m6ct:'M6_ChuongTrinhKTGS', m6cuoc:'M6_CuocKTGS',
   m6kltren:'M6_KetLuanCapTren', m6klda:'M6_KetLuanDaThucHien',
   m6doantren:'M6_DoanCapTren',
-  m7hop:'M7_HopBCH'
+  m7hop:'M7_HopBCH',
+  m7shtx:'M7_SinhHoatThuongKy', m7shcd:'M7_SinhHoatChuyenDe'
 };
 
 /* ================= STATE & STORAGE ================= */
@@ -1272,7 +1273,7 @@ function m6TienDoView(tabsHTML){
 /* ---- M7: Họp BCH & SHCB ---- */
 let m7Tab='hop';
 VIEWS.m7 = function(){
-  const tabs=[['hop','Kỳ họp Ban Chấp hành'],['shcb','Sinh hoạt 13 chi bộ'],['cheo','Sinh hoạt chéo (QĐ 97-QĐ/TU)']];
+  const tabs=[['hop','Kỳ họp Ban Chấp hành'],['shtx','Sinh hoạt thường kỳ (tháng)'],['shcd','Sinh hoạt chuyên đề (quý)'],['cheo','Sinh hoạt chéo (QĐ 97-QĐ/TU)']];
   const tabsHTML=()=>`<div class="tabs">${tabs.map(([k,l])=>`<button class="${m7Tab===k?'active':''}" onclick="m7Go('${k}')">${l}</button>`).join('')}</div>`;
   if(m7Tab==='hop'){
     tableView({
@@ -1303,91 +1304,143 @@ VIEWS.m7 = function(){
       ],
       filterMatch:{nam:(r,v)=>String(r.nam)===v}
     });
-  } else if(m7Tab==='shcb'){
-    m7SHCBView(tabsHTML);
+  } else if(m7Tab==='shtx'){
+    m7SHTXView(tabsHTML);
+  } else if(m7Tab==='shcd'){
+    m7SHCDView(tabsHTML);
   } else {
     m7CheoView(tabsHTML);
   }
 };
 function m7Go(t){ m7Tab=t; VIEWS.m7(); }
-function m7SHCBView(tabsHTML){
-  const el=document.getElementById('content');
-  const year='2026';
-  function key(cb,m){ return year+'|'+cb+'|'+m; }
-  function draw(){
-    let html=`<div class="page-title">Phân hệ 7 · Theo dõi sinh hoạt định kỳ 13 chi bộ năm ${year}</div>
-    <div class="page-sub">Bấm vào ô để đánh dấu: ✓ đã sinh hoạt (có biên bản) · ✕ chưa sinh hoạt · trống = chưa đến kỳ</div>
-    ${tabsHTML()}`;
-    const months=[...Array(12).keys()].map(i=>i+1);
-    // KPI
-    const doneCount=Object.values(S.m7sinhoat).filter(v=>v==='done').length;
-    html+=`<div class="kpis">
-      <div class="kpi green"><div class="v">${doneCount}</div><div class="l">Lượt sinh hoạt đã thực hiện (có biên bản) năm ${year}</div></div>
-      <div class="kpi"><div class="v">13</div><div class="l">Chi bộ trực thuộc Đảng bộ Chi cục</div></div>
-    </div>
-    <div class="tbl-wrap"><table><thead><tr><th style="min-width:190px">Chi bộ</th>${months.map(m=>`<th class="num">T${m}</th>`).join('')}<th class="num">Đã SH</th></tr></thead><tbody>`;
-    S.chibo13.forEach(cb=>{
-      let cnt=0;
-      html+=`<tr><td><b>${esc(cb)}</b></td>`;
-      months.forEach(m=>{
-        const v=S.m7sinhoat[key(cb,m)];
-        if(v==='done')cnt++;
-        const sym=v==='done'?'✓':(v==='miss'?'✕':'·');
-        const col=v==='done'?'var(--green)':(v==='miss'?'var(--red)':'var(--line)');
-        html+=`<td class="toggle-cell" style="color:${col};font-weight:700" onclick="m7Toggle('${esc(cb)}',${m})" title="${cb} - Tháng ${m}">${sym}</td>`;
-      });
-      html+=`<td class="num"><span class="badge ${cnt>=6?'b-green':'b-amber'}">${cnt}/12</span></td></tr>`;
-    });
-    html+=`</tbody></table></div>
-    <div class="note-banner">Theo Quy định, chi bộ sinh hoạt định kỳ mỗi tháng 1 lần. Ô đánh dấu ✕ (chưa sinh hoạt/chậm nộp biên bản) cần đôn đốc trước kỳ giao ban tháng kế tiếp.</div>`;
-    el.innerHTML=html;
-  }
-  window.m7Toggle=(cb,m)=>{
-    const k=key(cb,m); const cur=S.m7sinhoat[k];
-    S.m7sinhoat[k] = cur==='done'?'miss':(cur==='miss'?'':'done');
-    if(S.m7sinhoat[k]==='') delete S.m7sinhoat[k];
-    save(); draw();
+const M7_YEAR=2026;
+const M7_QL=['','I','II','III','IV'];
+function m7Rows(data){ const seen=[]; data.forEach(r=>{ if(seen.indexOf(r.chibo)<0) seen.push(r.chibo); }); return seen; }
+function m7Avg(data){ const p=data.map(r=>parseFloat(r.tyle)).filter(v=>!isNaN(v)); return p.length?Math.round(p.reduce((a,b)=>a+b,0)/p.length*10)/10:0; }
+function shortCB(s){ return String(s||'').replace(/^Chi bộ\s*/i,'').replace(/^Hải quan cửa khẩu\s*(quốc tế\s*)?(cảng\s*)?/i,'').replace(/^Đội\s*/i,'').trim(); }
+function m7CheoName(s){ return String(s||'').replace(/^Đ\/c\s*/i,'').replace(/\s*[-–].*$/,'').replace(/,.*$/,'').replace(/\(.*$/,'').trim(); }
+
+/* Popup chi tiết (dùng chung modal có sẵn) */
+function m7ShowDetail(title, recs, mode){
+  const bg=document.getElementById('modalBg'), box=document.getElementById('modalBox');
+  const blk=(rec)=>{
+    const rows=[]; const add=(l,v)=>{ if(v) rows.push(`<div class="field"><label>${l}</label><div style="padding:2px 0">${esc(v)}</div></div>`); };
+    if(mode!=='tx') add('Kế hoạch', rec.kh);
+    add('Thời gian', rec.ngaygio);
+    add('Địa điểm', rec.diadiem);
+    add('Tỷ lệ dự', (rec.du&&rec.tong)?(`${rec.du}/${rec.tong}`+(rec.tyle?` (${rec.tyle}%)`:'')):(rec.tyle?rec.tyle+'%':''));
+    if(mode!=='tx') add('Nội dung chuyên đề', rec.noidung);
+    add('Nghị quyết', rec.nghiquyet?(rec.nghiquyet+(rec.ngaynq?(' — ngày '+rec.ngaynq):'')):'');
+    add('Ý kiến tham gia', rec.ykien);
+    if(mode==='tx') add('Đảng ủy viên dự sinh hoạt chéo', rec.cheo);
+    return rows.join('')+`<div class="field"><label class="mini">Nguyên văn</label><div class="mini" style="white-space:pre-wrap;color:var(--muted,#555)">${esc(rec.raw||'')}</div></div>`;
   };
-  draw();
+  const body = recs.map((r,i)=>(recs.length>1?`<div style="font-weight:700;color:var(--navy);margin:6px 0 2px">Cuộc ${i+1}</div>`:'')+blk(r)).join('<hr style="border:none;border-top:1px solid var(--line);margin:10px 0">');
+  box.innerHTML=`<div class="mh">${esc(title)}<button onclick="closeModal()">×</button></div><div class="mb">${body}</div><div class="mf"><button class="btn primary" onclick="closeModal()">Đóng</button></div>`;
+  bg.classList.add('open');
 }
-function m7CheoView(tabsHTML){
+
+/* ===== Tab: SINH HOẠT THƯỜNG KỲ (13 chi bộ × 12 tháng) ===== */
+function m7SHTXView(tabsHTML){
   const el=document.getElementById('content');
-  const months=[...Array(12).keys()].map(i=>i+1);
-  const doneBC = S.m7shcb.reduce((a,m)=>a+Object.values(m.pc).filter(x=>x.bc).length,0);
-  const totalPC = S.m7shcb.reduce((a,m)=>a+Object.keys(m.pc).length,0);
-  let html=`<div class="page-title">Phân hệ 7 · Phân công dự sinh hoạt chéo của đảng ủy viên năm 2026</div>
-  <div class="page-sub">Thực hiện Quy định 97-QĐ/TU của Tỉnh ủy Quảng Ninh · Ô hiển thị chi bộ được phân công dự; dấu ✓ = đã dự và có báo cáo</div>
+  const data=(S.m7shtx||[]).slice(); window.__m7tx=data;
+  if(!data.length){ el.innerHTML=`<div class="page-title">Phân hệ 7 · Sinh hoạt thường kỳ 13 chi bộ</div>${tabsHTML()}<div class="note-banner">Chưa có dữ liệu đồng bộ. Trong Google Sheet CSDL, mở menu <b>⚙ Hệ thống KV8 → Đồng bộ Sinh hoạt chi bộ</b> rồi tải lại trang.</div>`; return; }
+  const rows=m7Rows(data), months=[...Array(12).keys()].map(i=>i+1);
+  const idx={}; data.forEach(r=>{ const k=r.chibo+'|'+r.thang; (idx[k]=idx[k]||[]).push(r); });
+  const total=data.length, withNQ=data.filter(r=>r.nghiquyet).length, avg=m7Avg(data), cheoCnt=data.filter(r=>r.cheo).length;
+  const maxM=Math.max.apply(null, data.map(r=>+r.thang||0));
+  const missing=[]; rows.forEach(cb=>{ for(let m=1;m<=maxM;m++){ if(!idx[cb+'|'+m]) missing.push(shortCB(cb)+' (T'+m+')'); } });
+  let html=`<div class="page-title">Phân hệ 7 · Sinh hoạt thường kỳ 13 chi bộ năm ${M7_YEAR}</div>
+  <div class="page-sub">Đồng bộ từ Sổ theo dõi sinh hoạt thường kỳ · Bấm ô (hiển thị % dự) để xem chi tiết</div>
   ${tabsHTML()}
   <div class="kpis">
-    <div class="kpi"><div class="v">${S.m7shcb.length}</div><div class="l">Đảng ủy viên được phân công dự sinh hoạt chéo</div></div>
-    <div class="kpi gold"><div class="v">${totalPC}</div><div class="l">Lượt phân công cả năm 2026</div></div>
-    <div class="kpi green"><div class="v">${doneBC}</div><div class="l">Lượt đã dự, có báo cáo (bấm ô để cập nhật ✓)</div></div>
+    <div class="kpi green"><div class="v">${total}</div><div class="l">Lượt sinh hoạt thường kỳ đã thực hiện</div></div>
+    <div class="kpi"><div class="v">${avg}%</div><div class="l">Tỷ lệ đảng viên dự bình quân</div></div>
+    <div class="kpi ${(total-withNQ)>0?'gold':''}"><div class="v">${total-withNQ}</div><div class="l">Lượt chưa ghi nhận nghị quyết</div></div>
+    <div class="kpi gold"><div class="v">${cheoCnt}</div><div class="l">Lượt có đảng ủy viên dự sinh hoạt chéo</div></div>
   </div>
-  <div class="toolbar"><button class="btn" onclick="m7ExportCheo()">⤓ Xuất Excel</button></div>
-  <div class="tbl-wrap"><table><thead><tr><th class="num">TT</th><th style="min-width:150px">Họ và tên</th><th style="min-width:150px">Chức vụ</th><th style="min-width:120px">Chi bộ SH thường kỳ</th>${months.map(m=>`<th style="min-width:78px">T${m}</th>`).join('')}</tr></thead><tbody>`;
-  S.m7shcb.forEach((mb,i)=>{
-    html+=`<tr><td class="num">${i+1}</td><td><b>${esc(mb.ten)}</b><div class="mini">${esc(mb.nhom)}</div></td><td class="mini">${esc(mb.chucvu)}</td><td class="mini">${esc(mb.chibo)}</td>`;
-    months.forEach(m=>{
-      const a=mb.pc[String(m)];
-      if(a){
-        html+=`<td class="shcb-cell" style="cursor:pointer;background:${a.bc?'var(--green-soft)':'var(--gold-soft)'}" onclick="m7ToggleBC(${i},'${m}')" title="Bấm để chuyển trạng thái báo cáo">${esc(a.cb)}${a.bc?' <span class="bc">✓</span>':''}</td>`;
-      } else html+=`<td class="mini" style="text-align:center;color:var(--line)">·</td>`;
+  <div class="toolbar"><button class="btn" onclick="m7ExportTX()">⤓ Xuất Excel</button></div>
+  <div class="tbl-wrap"><table><thead><tr><th style="min-width:190px">Chi bộ</th>${months.map(m=>`<th class="num">T${m}</th>`).join('')}<th class="num">Đã SH</th></tr></thead><tbody>`;
+  rows.forEach(cb=>{ let cnt=0; html+=`<tr><td><b>${esc(cb)}</b></td>`;
+    months.forEach(m=>{ const recs=idx[cb+'|'+m];
+      if(recs&&recs.length){ cnt+=recs.length; const p=parseFloat(recs[0].tyle);
+        const col=isNaN(p)?'var(--navy)':(p>=90?'var(--green)':(p>=75?'#B8860B':'var(--red)'));
+        const lbl=(recs.length>1?recs.length+'× ':'')+(isNaN(p)?'✓':p+'%');
+        html+=`<td class="toggle-cell" style="color:${col};font-weight:700;cursor:pointer" onclick="m7DetailTX('${esc(cb).replace(/'/g,"\\'")}',${m})" title="${esc(cb)} - T${m}">${lbl}</td>`;
+      } else html+=`<td style="text-align:center;color:var(--line)">·</td>`;
+    });
+    html+=`<td class="num"><span class="badge ${cnt>=maxM?'b-green':'b-amber'}">${cnt}</span></td></tr>`;
+  });
+  html+=`</tbody></table></div>`;
+  if(missing.length) html+=`<div class="note-banner"><b>Cần đôn đốc (đến tháng ${maxM}):</b> ${missing.map(esc).join(' · ')}</div>`;
+  else html+=`<div class="note-banner">Các chi bộ đảm bảo sinh hoạt định kỳ đến tháng ${maxM}. Duy trì nề nếp, nộp biên bản đúng hạn.</div>`;
+  el.innerHTML=html;
+}
+window.m7DetailTX=(cb,m)=>{ const recs=(window.__m7tx||[]).filter(r=>r.chibo===cb&&(+r.thang)===m); if(recs.length) m7ShowDetail(cb+' — Tháng '+m, recs, 'tx'); };
+window.m7ExportTX=()=>{ const data=window.__m7tx||[]; const rows=data.map(r=>({'Chi bộ':r.chibo,'Tháng':r.thang,'Năm':r.nam,'Thời gian':r.ngaygio,'Địa điểm':r.diadiem,'Dự':r.du,'Tổng':r.tong,'Tỷ lệ %':r.tyle,'Nghị quyết':r.nghiquyet,'Ngày NQ':r.ngaynq,'Ý kiến':r.ykien,'SH chéo':r.cheo})); const ws=XLSX.utils.json_to_sheet(rows);const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'SinhHoatThuongKy');XLSX.writeFile(wb,'SinhHoat_ThuongKy_'+M7_YEAR+'.xlsx'); };
+
+/* ===== Tab: SINH HOẠT CHUYÊN ĐỀ (13 chi bộ × 4 quý) ===== */
+function m7SHCDView(tabsHTML){
+  const el=document.getElementById('content');
+  const data=(S.m7shcd||[]).slice(); window.__m7cd=data;
+  if(!data.length){ el.innerHTML=`<div class="page-title">Phân hệ 7 · Sinh hoạt chuyên đề</div>${tabsHTML()}<div class="note-banner">Chưa có dữ liệu đồng bộ. Mở menu <b>⚙ Hệ thống KV8 → Đồng bộ Sinh hoạt chi bộ</b> trong Google Sheet CSDL rồi tải lại trang.</div>`; return; }
+  const rows=m7Rows(data), quarters=[1,2,3,4];
+  const idx={}; data.forEach(r=>{ const k=r.chibo+'|'+r.quy; (idx[k]=idx[k]||[]).push(r); });
+  const total=data.length, avg=m7Avg(data), maxQ=Math.max.apply(null, data.map(r=>+r.quy||0));
+  const done=rows.filter(cb=>idx[cb+'|'+maxQ]).length;
+  let html=`<div class="page-title">Phân hệ 7 · Sinh hoạt chuyên đề 13 chi bộ năm ${M7_YEAR}</div>
+  <div class="page-sub">Đồng bộ từ Sổ theo dõi sinh hoạt chuyên đề · Bấm ô để xem nội dung chuyên đề, nghị quyết</div>
+  ${tabsHTML()}
+  <div class="kpis">
+    <div class="kpi green"><div class="v">${total}</div><div class="l">Lượt sinh hoạt chuyên đề đã thực hiện</div></div>
+    <div class="kpi"><div class="v">${avg}%</div><div class="l">Tỷ lệ đảng viên dự bình quân</div></div>
+    <div class="kpi ${done<rows.length?'gold':'green'}"><div class="v">${done}/${rows.length}</div><div class="l">Chi bộ đã SH chuyên đề Quý ${M7_QL[maxQ]}</div></div>
+  </div>
+  <div class="toolbar"><button class="btn" onclick="m7ExportCD()">⤓ Xuất Excel</button></div>
+  <div class="tbl-wrap"><table><thead><tr><th style="min-width:190px">Chi bộ</th>${quarters.map(q=>`<th class="num">Quý ${M7_QL[q]}</th>`).join('')}</tr></thead><tbody>`;
+  rows.forEach(cb=>{ html+=`<tr><td><b>${esc(cb)}</b></td>`;
+    quarters.forEach(q=>{ const recs=idx[cb+'|'+q];
+      if(recs&&recs.length){ const p=parseFloat(recs[0].tyle);
+        const col=isNaN(p)?'var(--navy)':(p>=90?'var(--green)':'#B8860B');
+        html+=`<td class="toggle-cell" style="color:${col};font-weight:700;cursor:pointer" onclick="m7DetailCD('${esc(cb).replace(/'/g,"\\'")}',${q})" title="${esc(cb)} - Quý ${M7_QL[q]}">${(recs.length>1?recs.length+'× ':'')}${isNaN(p)?'✓':p+'%'}</td>`;
+      } else html+=`<td style="text-align:center;color:var(--line)">·</td>`;
     });
     html+=`</tr>`;
   });
   html+=`</tbody></table></div>
-  <div class="note-banner">Sau khi dự sinh hoạt, đảng ủy viên gửi báo cáo về Tổ Tham mưu giúp việc Đảng ủy — bấm vào ô phân công để đánh dấu ✓ đã có báo cáo. Ô nền vàng: đã phân công, chưa có báo cáo.</div>`;
+  <div class="note-banner">Mỗi chi bộ sinh hoạt chuyên đề tối thiểu 01 lần/quý. Ô trống ở quý đã qua cần đôn đốc bổ sung.</div>`;
   el.innerHTML=html;
-  window.m7ToggleBC=(i,m)=>{ const a=S.m7shcb[i].pc[m]; if(a){ a.bc=!a.bc; save(); VIEWS.m7(); } };
-  window.m7ExportCheo=()=>{
-    const rows=S.m7shcb.map((mb,i)=>{
-      const o={TT:i+1,'Họ và tên':mb.ten,'Chức vụ':mb.chucvu,'Chi bộ SH thường kỳ':mb.chibo};
-      months.forEach(m=>{const a=mb.pc[String(m)];o['T'+m]=a?(a.cb+(a.bc?' (đã BC)':'')):'';});
-      return o;
-    });
-    const ws=XLSX.utils.json_to_sheet(rows);const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'SinhHoatCheo');XLSX.writeFile(wb,'PhanCong_SinhHoatCheo_2026.xlsx');
-  };
 }
+window.m7DetailCD=(cb,q)=>{ const recs=(window.__m7cd||[]).filter(r=>r.chibo===cb&&(+r.quy)===q); if(recs.length) m7ShowDetail(cb+' — Quý '+M7_QL[q], recs, 'cd'); };
+window.m7ExportCD=()=>{ const data=window.__m7cd||[]; const rows=data.map(r=>({'Chi bộ':r.chibo,'Quý':M7_QL[r.quy],'Năm':r.nam,'Kế hoạch':r.kh,'Thời gian':r.ngaygio,'Địa điểm':r.diadiem,'Dự':r.du,'Tổng':r.tong,'Tỷ lệ %':r.tyle,'Nội dung chuyên đề':r.noidung,'Nghị quyết':r.nghiquyet,'Ngày NQ':r.ngaynq,'Ý kiến':r.ykien})); const ws=XLSX.utils.json_to_sheet(rows);const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'SinhHoatChuyenDe');XLSX.writeFile(wb,'SinhHoat_ChuyenDe_'+M7_YEAR+'.xlsx'); };
+
+/* ===== Tab: SINH HOẠT CHÉO (QĐ 97) — tự tổng hợp từ Sổ thường kỳ ===== */
+function m7CheoView(tabsHTML){
+  const el=document.getElementById('content');
+  const data=(S.m7shtx||[]).filter(r=>r.cheo);
+  const months=[...Array(12).keys()].map(i=>i+1);
+  if(!data.length){ el.innerHTML=`<div class="page-title">Phân hệ 7 · Sinh hoạt chéo (QĐ 97-QĐ/TU)</div>${tabsHTML()}<div class="note-banner">Chưa có dữ liệu. Cột “Đảng ủy viên dự sinh hoạt chéo” được tổng hợp tự động từ Sổ sinh hoạt thường kỳ sau khi đồng bộ.</div>`; return; }
+  const people={};
+  data.forEach(r=>{ const nm=m7CheoName(r.cheo); if(!nm) return; const p=people[nm]||(people[nm]={name:nm,m:{}}); (p.m[r.thang]=p.m[r.thang]||[]).push(r.chibo); });
+  const list=Object.keys(people).map(k=>people[k]).sort((a,b)=>a.name.localeCompare(b.name,'vi')); window.__m7cheo=list;
+  let html=`<div class="page-title">Phân hệ 7 · Sinh hoạt chéo của đảng ủy viên năm ${M7_YEAR} (QĐ 97-QĐ/TU)</div>
+  <div class="page-sub">Tổng hợp tự động từ Sổ theo dõi sinh hoạt thường kỳ · Ô hiển thị chi bộ đảng ủy viên đã dự</div>
+  ${tabsHTML()}
+  <div class="kpis">
+    <div class="kpi"><div class="v">${list.length}</div><div class="l">Đảng ủy viên có dự sinh hoạt chéo</div></div>
+    <div class="kpi green"><div class="v">${data.length}</div><div class="l">Lượt dự sinh hoạt chéo đã ghi nhận</div></div>
+  </div>
+  <div class="toolbar"><button class="btn" onclick="m7ExportCheo()">⤓ Xuất Excel</button></div>
+  <div class="tbl-wrap"><table><thead><tr><th class="num">TT</th><th style="min-width:170px">Đảng ủy viên</th>${months.map(m=>`<th style="min-width:70px">T${m}</th>`).join('')}<th class="num">Lượt</th></tr></thead><tbody>`;
+  list.forEach((p,i)=>{ let cnt=0; html+=`<tr><td class="num">${i+1}</td><td><b>${esc(p.name)}</b></td>`;
+    months.forEach(m=>{ const a=p.m[m]; if(a&&a.length){ cnt+=a.length; html+=`<td class="shcb-cell" style="background:var(--green-soft)" title="${esc(a.join('; '))}">${esc(a.map(shortCB).join(', '))}</td>`; } else html+=`<td class="mini" style="text-align:center;color:var(--line)">·</td>`; });
+    html+=`<td class="num"><span class="badge b-navy">${cnt}</span></td></tr>`;
+  });
+  html+=`</tbody></table></div>
+  <div class="note-banner">Thực hiện Quy định 97-QĐ/TU của Tỉnh ủy Quảng Ninh. Dữ liệu lấy trực tiếp từ nội dung “Đảng ủy viên dự sinh hoạt chéo” do các chi bộ ghi trong Sổ sinh hoạt thường kỳ.</div>`;
+  el.innerHTML=html;
+}
+window.m7ExportCheo=()=>{ const list=window.__m7cheo||[]; const months=[...Array(12).keys()].map(i=>i+1); const rows=list.map((p,i)=>{ const o={TT:i+1,'Đảng ủy viên':p.name}; months.forEach(m=>o['T'+m]=(p.m[m]||[]).join('; ')); return o; }); const ws=XLSX.utils.json_to_sheet(rows);const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'SinhHoatCheo');XLSX.writeFile(wb,'SinhHoatCheo_'+M7_YEAR+'.xlsx'); };
 
 /* ================= INIT ================= */
 (async function(){
