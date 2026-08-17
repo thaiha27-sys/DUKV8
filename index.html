@@ -337,9 +337,13 @@ function _recencyKey(r,key){
   if(key==='m2') return _parseDMY(r.ngay);
   if(key==='m4a') return _recMonth(r.thangQT)|| (parseInt(r.nam)||0)*100;
   if(key==='m4b') return _recMonth(r.thangBH)||_recMonth(r.thangQT)||(parseInt(r.nam)||0)*100;
+  /* Phân hệ 5 lấy mốc (năm, tháng) của kỳ kết quả. Trước đây m5 không nằm trong
+     _SORTABLE nên bảng hiện đúng thứ tự dòng trong Google Sheet: tháng 1 ở đầu, tháng
+     mới nhất tụt xuống tận cuối 674 dòng — nhìn vào tưởng chưa có số liệu tháng mới. */
+  if(key==='m5') return (parseInt(m5Nam(r))||0)*100+(parseInt(r.thang)||0);
   return 0;
 }
-const _SORTABLE={m1:1,m2:1,m4a:1,m4b:1};
+const _SORTABLE={m1:1,m2:1,m4a:1,m4b:1,m5:1};
 function tableView(cfg){
   // cfg: {title, sub, dataKey (path in S), cols, filters:[{k,label,getOpts}], searchKeys, kpis(), extraToolbar, rowBadge}
   const el = document.getElementById('content');
