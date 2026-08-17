@@ -939,6 +939,17 @@ window.m4DelDup=async function(key,i){
 
 /* ---- M5: Tra cứu kết quả ---- */
 let m5Tab='kq';
+/* Năm của một đầu việc ở phân hệ 5.
+   Ưu tiên cột `nam` do pipeline day_ph45.py ghi lên. Bảng M5_KetQua dựng từ trước chỉ
+   có cột `thang`, nên dòng cũ chưa có `nam` — bóc tạm từ ngày văn bản trong cột
+   "Sản phẩm / kết quả" ("Công văn số 155-CV/ĐU ngày 21/1/2026"). Đo ngày 17/8/2026:
+   386/387 dòng bóc được. Khi tab M5_KetQua có thêm cột `nam` thì mọi dòng lấy giá trị
+   thật, không cần bóc nữa. */
+function m5Nam(r){
+  if(r && r.nam) return String(r.nam).trim();
+  const m = String((r&&r.sanpham)||'').match(/ngày\s*\d{1,2}\/\d{1,2}\/(\d{4})/i);
+  return m ? m[1] : '';
+}
 VIEWS.m5 = function(){
   if(m5Tab==='so'){ m5PLView(); return; }
   if(m5Tab==='next'){
@@ -961,10 +972,11 @@ VIEWS.m5 = function(){
   }
   tableView({
     title:'Phân hệ 5 · Tra cứu kết quả nhiệm vụ công tác Đảng',
-    sub:'Tra cứu theo tháng, quý, năm, đơn vị và cá nhân · Dữ liệu 6 tháng đầu năm 2026 (386 đầu việc)',
+    sub:'Tra cứu theo năm, tháng, quý, đơn vị và cá nhân · Dữ liệu tự cập nhật từ file THEO DOI CV KV8 vào ngày 15, 25 và ngày cuối mỗi tháng',
     dataKey:'m5',
     beforeHTML: m5TabsHTML,
     cols:[
+      {k:'nam',label:'Năm',w:64,render:r=>`<span class="badge b-gray">${esc(m5Nam(r))}</span>`,exportVal:r=>m5Nam(r)},
       {k:'thang',label:'Tháng',w:60,render:r=>`<span class="badge b-red">T${esc(r.thang)}</span>`},
       {k:'noidung',label:'Nội dung công việc',type:'textarea',w:280},
       {k:'donvi',label:'Đơn vị tham mưu',w:120},
@@ -973,12 +985,14 @@ VIEWS.m5 = function(){
       {k:'nguoi',label:'Người thực hiện',w:120}
     ],
     filters:[
+      {k:'nam',label:'Năm',getOpts:d=>[...new Set(d.map(m5Nam).filter(Boolean))].sort()},
       {k:'thang',label:'Tháng',getOpts:d=>[...new Set(d.map(r=>String(r.thang)))].sort((a,b)=>a-b)},
       {k:'quy',label:'Quý',getOpts:()=>['Quý I','Quý II','Quý III','Quý IV']},
       {k:'donvi',label:'Đơn vị',getOpts:d=>[...new Set(d.map(r=>r.donvi).filter(Boolean))].sort()},
       {k:'nguoi',label:'Cá nhân',getOpts:d=>[...new Set(d.map(r=>r.nguoi).filter(Boolean))].sort()}
     ],
     filterMatch:{
+      nam:(r,v)=>m5Nam(r)===v,
       thang:(r,v)=>String(r.thang)===v,
       quy:(r,v)=>{const q=Math.ceil(Number(r.thang)/3);return ('Quý '+['I','II','III','IV'][q-1])===v;}
     }
