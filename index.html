@@ -208,34 +208,99 @@ let S = null;
 const SKEY = 'dukv8-state-v3';
 const ONLINE = ()=> !!GAS_URL;
 
-function jsonp(url){
+/* ---- Gọi JSONP.  hanCho: mili-giây, mặc định 90 s.
+   Sửa 26/8/2026: trước đây hạn chờ cứng 20 s, trong khi gói `action=all` đã nặng 5,2 MB
+   (M2 2,8 MB + M1 1,4 MB) và Apps Script trả no-cache nên lần nào cũng tải lại đủ.
+   Máy mạng chậm thường xuyên quá hạn rồi âm thầm lùi về dữ liệu mẫu SEED (dừng T6/2026). */
+function jsonp(url, hanCho){
   return new Promise((resolve,reject)=>{
     const cb='__cb'+Date.now()+Math.floor(Math.random()*1e5);
-    window[cb]=(d)=>{ resolve(d); delete window[cb]; s.remove(); };
     const s=document.createElement('script');
+    let xong=false;
+    const don=()=>{ try{ delete window[cb]; }catch(e){ window[cb]=undefined; } try{ s.remove(); }catch(e){} };
+    window[cb]=(d)=>{ if(xong) return; xong=true; don(); resolve(d); };
     s.src=url+(url.includes('?')?'&':'?')+'callback='+cb;
-    s.onerror=()=>{ reject(new Error('Không kết nối được Google Sheet')); s.remove(); };
+    s.onerror=()=>{ if(xong) return; xong=true; don(); reject(new Error('Không kết nối được Google Sheet')); };
     document.body.appendChild(s);
-    setTimeout(()=>{ if(window[cb]){ reject(new Error('Hết thời gian chờ máy chủ')); delete window[cb]; s.remove(); } },20000);
+    setTimeout(()=>{ if(!xong){ xong=true; don(); reject(new Error('Hết thời gian chờ máy chủ')); } }, hanCho||90000);
   });
+}
+
+/* ================= NẠP DỮ LIỆU THEO TỪNG BẢNG ================= */
+const HAN_CHO_BANG = 90000;   // hạn chờ cho MỖI bảng (ms)
+const SO_SONG_SONG = 10;      // số yêu cầu chạy cùng lúc (đo 26/8/2026: 4→12s, 6→8s, 10→5,5s, 12→5,4s ⇒ bão hòa ở 10)
+const BANG_NANG = ['m2','m1','m4a','m5','m4b'];   // xếp xuống cuối hàng đợi
+
+function _dukv8Lop(id, css){
+  let e=document.getElementById(id);
+  if(!e){ e=document.createElement('div'); e.id=id; e.style.cssText=css; document.body.appendChild(e); }
+  return e;
+}
+function hienTienDoNap(xong, tong){
+  const e=_dukv8Lop('napTienDo','position:fixed;left:50%;top:14px;transform:translateX(-50%);z-index:9999;'
+    +'background:#21409A;color:#fff;padding:8px 16px;border-radius:8px;'
+    +'font:600 13px/1.4 system-ui,Segoe UI,sans-serif;box-shadow:0 4px 14px rgba(0,0,0,.25)');
+  e.textContent='Đang tải dữ liệu từ Google Sheet… '+xong+'/'+tong+' bảng';
+}
+function anTienDoNap(){ const e=document.getElementById('napTienDo'); if(e) e.remove(); }
+function canhBaoNap(msg, nang){
+  const e=_dukv8Lop('napCanhBao','position:fixed;left:0;right:0;top:0;z-index:9998;padding:11px 16px;'
+    +'font:600 13px/1.45 system-ui,Segoe UI,sans-serif;box-shadow:0 2px 10px rgba(0,0,0,.25);color:#fff');
+  e.style.background = nang ? '#8C1D18' : '#B26B00';
+  e.innerHTML = '⚠ ' + msg
+    + ' <button onclick="location.reload()" style="margin-left:10px;padding:3px 12px;border:0;border-radius:5px;'
+    + 'background:#fff;color:#21409A;font-weight:700;cursor:pointer">Tải lại</button>'
+    + '<span onclick="this.parentNode.remove()" title="Đóng" style="float:right;cursor:pointer;'
+    + 'font-size:17px;line-height:1;padding:0 4px">×</span>';
+}
+
+/* Tải riêng từng bảng (action=table) thay cho gói action=all 5,2 MB.
+   Chạy SO_SONG_SONG yêu cầu cùng lúc, mỗi bảng có hạn chờ riêng và được thử lại 1 lần
+   ⇒ một bảng nặng chậm không còn kéo sập toàn bộ trang. */
+async function taiTungBang(dsKhoa, baoTienDo){
+  const ketQua = {}, loi = [];
+  let i = 0, xong = 0;
+  async function chay(){
+    while(i < dsKhoa.length){
+      const k = dsKhoa[i++], ten = SHEET_MAP[k];
+      let duoc = null;
+      for(let lan=0; lan<3 && !duoc; lan++){
+        if(lan) await new Promise(r=>setTimeout(r, lan*1200));   // nghỉ rồi thử lại (máy chủ bận)
+        try{
+          const r = await jsonp(GAS_URL+'?action=table&name='+encodeURIComponent(ten), HAN_CHO_BANG);
+          if(r && r.ok && Array.isArray(r.data)) duoc = r.data;
+        }catch(e){ if(lan===2) console.error('Không tải được bảng '+ten+': '+e.message); }
+      }
+      if(duoc) ketQua[k] = duoc; else loi.push(ten);
+      xong++; if(baoTienDo) baoTienDo(xong, dsKhoa.length);
+    }
+  }
+  await Promise.all(Array.from({length: Math.min(SO_SONG_SONG, dsKhoa.length)}, chay));
+  return {ketQua, loi};
 }
 
 async function loadState(){
   S=null;
   if(ONLINE()){
-    try{
-      const res = await jsonp(GAS_URL+'?action=all');
-      if(res && res.ok){
-        S = JSON.parse(JSON.stringify(SEED));       // giữ khung + phần lồng
-        // đổ dữ liệu phẳng từ Sheet vào các khóa đã ánh xạ
-        for(const key in SHEET_MAP){
-          const rows = res.data[SHEET_MAP[key]]||[];
-          S[key] = rows.map(cleanRow);
-        }
-        rebuildNested();                            // dựng lại m3/m7 từ dữ liệu phẳng nếu có
-        return;
+    const dsKhoa = Object.keys(SHEET_MAP);
+    dsKhoa.sort((a,b)=> (BANG_NANG.indexOf(a)<0?0:1) - (BANG_NANG.indexOf(b)<0?0:1));  // nhẹ trước, nặng sau
+    hienTienDoNap(0, dsKhoa.length);
+    let ketQua={}, loi=dsKhoa.map(k=>SHEET_MAP[k]);
+    try{ const r = await taiTungBang(dsKhoa, hienTienDoNap); ketQua=r.ketQua; loi=r.loi; }
+    catch(e){ console.error(e); }
+    anTienDoNap();
+    if(Object.keys(ketQua).length){
+      S = JSON.parse(JSON.stringify(SEED));          // giữ khung + phần lồng
+      for(const key in SHEET_MAP){
+        S[key] = (ketQua[key]||[]).map(cleanRow);    // bảng lỗi: để TRỐNG, không lấy dữ liệu mẫu
       }
-    }catch(e){ console.error(e); alert('Không tải được dữ liệu online: '+e.message+'\nTạm dùng dữ liệu trên máy.'); }
+      rebuildNested();                               // dựng lại m3/m7 từ dữ liệu phẳng nếu có
+      if(loi.length) canhBaoNap('Chưa tải được '+loi.length+' bảng ('+loi.join(', ')
+        +'). Các mục tương ứng đang hiển thị TRỐNG — bấm Tải lại để thử lại.');
+      return;
+    }
+    canhBaoNap('KHÔNG kết nối được Google Sheet. Trang đang hiển thị DỮ LIỆU MẪU cũ nhúng sẵn '
+      +'trong file (khoảng đến tháng 6/2026), KHÔNG phải số liệu thật.', true);
   }
   // offline
   try{ const r=await window.storage.get(SKEY); if(r&&r.value) S=JSON.parse(r.value); }catch(e){}
@@ -1291,7 +1356,7 @@ function m6TienDoView(tabsHTML){
 /* ---- M7: Họp BCH & SHCB ---- */
 let m7Tab='hop';
 VIEWS.m7 = function(){
-  const tabs=[['hop','Kỳ họp Ban Chấp hành'],['shtx','Sinh hoạt thường kỳ (tháng)'],['shcd','Sinh hoạt chuyên đề (quý)'],['cheo','Sinh hoạt chéo (QĐ 97-QĐ/TU)']];
+  const tabs=[['hop','Kỳ họp Ban Chấp hành'],['shtx','Sinh hoạt thường kỳ (tháng)'],['shcd','Sinh hoạt chuyên đề (quý)'],['cheo','Sinh hoạt chéo (QĐ 97-QĐ/TU)'],['pb','Ý kiến phát biểu của đảng viên (7B)']];
   const tabsHTML=()=>`<div class="tabs">${tabs.map(([k,l])=>`<button class="${m7Tab===k?'active':''}" onclick="m7Go('${k}')">${l}</button>`).join('')}</div>`;
   if(m7Tab==='hop'){
     tableView({
@@ -1324,6 +1389,8 @@ VIEWS.m7 = function(){
     });
   } else if(m7Tab==='shtx'){
     m7SHTXView(tabsHTML);
+  } else if(m7Tab==='pb'){
+    pbView(tabsHTML);
   } else if(m7Tab==='shcd'){
     m7SHCDView(tabsHTML);
   } else {
@@ -1459,6 +1526,164 @@ function m7CheoView(tabsHTML){
   el.innerHTML=html;
 }
 window.m7ExportCheo=()=>{ const list=window.__m7cheo||[]; const months=[...Array(12).keys()].map(i=>i+1); const rows=list.map((p,i)=>{ const o={TT:i+1,'Đảng ủy viên':p.name}; months.forEach(m=>o['T'+m]=(p.m[m]||[]).join('; ')); return o; }); const ws=XLSX.utils.json_to_sheet(rows);const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'SinhHoatCheo');XLSX.writeFile(wb,'SinhHoatCheo_'+M7_YEAR+'.xlsx'); };
+
+/* ===PH7B-BEGIN=== */
+/* ================= PHÂN HỆ 7B — THEO DÕI Ý KIẾN PHÁT BIỂU CỦA ĐẢNG VIÊN =================
+   Dữ liệu lấy từ bảng tính công cụ "CONGCU_TheoDoi_YKienPhatBieu…" qua Apps Script (JSONP).
+   Đặt đường dẫn /exec bằng nút "Cấu hình nguồn dữ liệu" ngay trên màn hình (lưu ở trình duyệt).
+   Khối này do PH7B/web/ph7b_snippet.js sinh ra — sửa ở đó rồi chèn lại, đừng sửa tay trong HTML. */
+let PB_URL = localStorage.getItem('dukv8-pb-url') || '';
+let PB_TOKEN = localStorage.getItem('dukv8-pb-token') || '';
+const PB = { tq: null, cb: null, dv: null, cbao: null, khen: null, luc: 0, dangTai: false, loi: '' };
+let pbBang = 'cb', pbLocCB = '', pbChiCanhBao = false;
+
+function pbGoi(fn, ts) {
+  let u = PB_URL + (PB_URL.includes('?') ? '&' : '?') + 'fn=' + encodeURIComponent(fn);
+  if (PB_TOKEN) u += '&token=' + encodeURIComponent(PB_TOKEN);
+  for (const k in (ts || {})) if (ts[k] !== '' && ts[k] != null) u += '&' + k + '=' + encodeURIComponent(ts[k]);
+  return jsonp(u).then(r => { if (!r || !r.ok) throw new Error((r && r.loi) || 'Máy chủ trả lỗi'); return r.duLieu; });
+}
+
+async function pbNap(ep) {
+  if (!PB_URL) return;
+  if (PB.dangTai) return;
+  if (!ep && PB.tq && (Date.now() - PB.luc) < 300000) return;      // dùng lại trong 5 phút
+  PB.dangTai = true; PB.loi = '';
+  try {
+    const [tq, cb, dv, cbao, khen] = await Promise.all([
+      pbGoi('tongquan'), pbGoi('cb'), pbGoi('dv'), pbGoi('canhbao'), pbGoi('khenche')
+    ]);
+    PB.tq = tq; PB.cb = cb; PB.dv = dv; PB.cbao = cbao; PB.khen = khen; PB.luc = Date.now();
+  } catch (e) { PB.loi = e.message; }
+  PB.dangTai = false;
+  if (CUR === 'm7' && m7Tab === 'pb') VIEWS.m7();
+}
+
+window.pbCauHinh = () => {
+  const u = prompt('Dán đường dẫn /exec của bảng tính theo dõi ý kiến phát biểu:', PB_URL || '');
+  if (u === null) return;
+  PB_URL = u.trim(); localStorage.setItem('dukv8-pb-url', PB_URL);
+  const t = prompt('Mã token (bỏ trống nếu bảng tính không đặt token):', PB_TOKEN || '');
+  if (t !== null) { PB_TOKEN = t.trim(); localStorage.setItem('dukv8-pb-token', PB_TOKEN); }
+  PB.tq = null; pbNap(true); VIEWS.m7();
+};
+window.pbTaiLai = () => { pbNap(true); toast('Đang tải lại số liệu ý kiến phát biểu…'); };
+window.pbChonCB = (v) => { pbLocCB = v; VIEWS.m7(); };
+window.pbChonBang = (v) => { pbBang = v; VIEWS.m7(); };
+window.pbLocCanhBao = (v) => { pbChiCanhBao = !!v; VIEWS.m7(); };
+
+function pbSo(x) { const n = parseFloat(x); return isNaN(n) ? 0 : n; }
+function pbPhanTram(x) { return Math.round(pbSo(x) * 100) + '%'; }
+
+/** Dựng bảng HTML từ {cot, dong}; cot Ẩn: mảng chỉ số cột cần bỏ. */
+function pbVeBang(d, an, tomau) {
+  if (!d || !d.dong || !d.dong.length) return '<div class="note-banner">Chưa có dữ liệu.</div>';
+  const bo = an || [];
+  const cot = d.cot.map((c, i) => [c, i]).filter(x => bo.indexOf(x[1]) < 0);
+  let h = '<div class="tbl-wrap"><table><thead><tr>' +
+    cot.map(c => `<th>${esc(c[0])}</th>`).join('') + '</tr></thead><tbody>';
+  d.dong.forEach(r => {
+    const mau = tomau ? tomau(r) : '';
+    h += `<tr${mau ? ` style="background:${mau}"` : ''}>` +
+      cot.map(c => {
+        const v = r[c[1]];
+        const so = (typeof v === 'number');
+        return `<td${so ? ' class="num"' : ''}>${esc(v === null || v === undefined ? '' : v)}</td>`;
+      }).join('') + '</tr>';
+  });
+  return h + '</tbody></table></div>';
+}
+
+function pbLoc(d, cotChiBo) {
+  if (!d) return d;
+  let dong = d.dong || [];
+  if (pbLocCB) dong = dong.filter(r => String(r[cotChiBo]).trim() === pbLocCB);
+  return { cot: d.cot, dong: dong };
+}
+
+function pbView(tabsHTML) {
+  const el = document.getElementById('content');
+  const dau = `<div class="page-title">Phân hệ 7B · Theo dõi ý kiến phát biểu của đảng viên tại sinh hoạt chi bộ</div>
+    <div class="page-sub">Đếm đến từng đảng viên: số lượt, chất lượng ý kiến, đảng viên chưa phát biểu hoặc chỉ phát biểu nhất trí — phục vụ nhắc nhở và xếp loại quý, năm</div>${tabsHTML()}`;
+
+  if (!PB_URL) {
+    el.innerHTML = dau + `<div class="note-banner">Chưa nối với bảng tính theo dõi ý kiến phát biểu.
+      Bấm <b>Cấu hình nguồn dữ liệu</b> rồi dán đường dẫn <code>/exec</code> của bảng tính công cụ
+      (Apps Script ▸ Triển khai ▸ Ứng dụng web).</div>
+      <div class="toolbar"><button class="btn primary" onclick="pbCauHinh()">Cấu hình nguồn dữ liệu</button></div>`;
+    return;
+  }
+  if (!PB.tq && !PB.loi) {
+    el.innerHTML = dau + '<div class="note-banner">Đang tải số liệu…</div>';
+    pbNap(false);
+    return;
+  }
+  if (PB.loi) {
+    el.innerHTML = dau + `<div class="note-banner">Không tải được số liệu: ${esc(PB.loi)}</div>
+      <div class="toolbar"><button class="btn" onclick="pbTaiLai()">Thử lại</button>
+      <button class="btn ghost" onclick="pbCauHinh()">Đổi nguồn dữ liệu</button></div>`;
+    return;
+  }
+
+  const t = PB.tq;
+  const dsCB = (PB.cb && PB.cb.dong || []).map(r => r[1]).filter(Boolean);
+  const kpi = `<div class="kpis">
+    <div class="kpi"><div class="v">${t.tongLuot}</div><div class="l">Lượt phát biểu đã ghi nhận</div></div>
+    <div class="kpi green"><div class="v">${t.luotThucChat}</div><div class="l">Lượt có nội dung đóng góp</div></div>
+    <div class="kpi ${pbSo(t.tyLeNhatTriSuong) >= 0.5 ? 'gold' : ''}"><div class="v">${pbPhanTram(t.tyLeNhatTriSuong)}</div><div class="l">Tỷ lệ ý kiến "nhất trí suông"</div></div>
+    <div class="kpi ${t.dangVienChuaPhatBieu > 0 ? 'gold' : 'green'}"><div class="v">${t.dangVienChuaPhatBieu}</div><div class="l">Đảng viên chưa phát biểu lần nào</div></div>
+    <div class="kpi ${t.dangVienChiNhatTri > 0 ? 'gold' : 'green'}"><div class="v">${t.dangVienChiNhatTri}</div><div class="l">Đảng viên chỉ phát biểu nhất trí</div></div>
+    <div class="kpi ${t.canhBaoDo > 0 ? 'gold' : 'green'}"><div class="v">${t.canhBaoDo}</div><div class="l">Cảnh báo mức đỏ</div></div>
+  </div>`;
+
+  const chon = ['cb', 'Theo chi bộ', 'dv', 'Theo đảng viên', 'canhbao', 'Cảnh báo cần xử lý', 'khenche', 'Đề nghị khen – nhắc nhở'];
+  let nut = '<div class="tabs" style="margin-top:6px">';
+  for (let i = 0; i < chon.length; i += 2)
+    nut += `<button class="${pbBang === chon[i] ? 'active' : ''}" onclick="pbChonBang('${chon[i]}')">${chon[i + 1]}</button>`;
+  nut += '</div>';
+
+  const locCB = `<select onchange="pbChonCB(this.value)" style="max-width:340px">
+      <option value="">— Tất cả 13 chi bộ —</option>
+      ${dsCB.map(c => `<option value="${esc(c)}"${pbLocCB === c ? ' selected' : ''}>${esc(c)}</option>`).join('')}
+    </select>`;
+
+  let than = '';
+  if (pbBang === 'cb') {
+    than = pbVeBang(pbLoc(PB.cb, 1), [11], r =>
+      String(r[12] || '').indexOf('thấp') >= 0 || String(r[12] || '').indexOf('CHƯA') >= 0 ? 'var(--red-soft)' : '');
+  } else if (pbBang === 'dv') {
+    let d = pbLoc(PB.dv, 3);
+    if (pbChiCanhBao) d = { cot: d.cot, dong: d.dong.filter(r => String(r[31] || '').trim()) };
+    // ẩn 12 cột tháng cho gọn, giữ các cột đánh giá
+    than = pbVeBang(d, [0, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 21, 22, 23, 24],
+      r => String(r[31] || '').trim() ? 'var(--red-soft)' : '');
+  } else if (pbBang === 'canhbao') {
+    than = pbVeBang(pbLoc(PB.cbao, 3), [], r => String(r[0]).indexOf('ĐỎ') >= 0 ? 'var(--red-soft)' : '');
+  } else {
+    than = pbVeBang(pbLoc(PB.khen, 4), [], r => String(r[1]).indexOf('BIỂU DƯƠNG') >= 0 ? '#EAF7EE' : 'var(--red-soft)');
+  }
+
+  el.innerHTML = dau + kpi + `<div class="toolbar">
+      ${locCB}
+      ${pbBang === 'dv' ? `<label class="mini" style="display:flex;align-items:center;gap:6px">
+        <input type="checkbox" ${pbChiCanhBao ? 'checked' : ''} onchange="pbLocCanhBao(this.checked)"> Chỉ hiện đảng viên có cảnh báo</label>` : ''}
+      <button class="btn" onclick="pbTaiLai()">Tải lại</button>
+      <button class="btn" onclick="pbXuat()">Xuất Excel</button>
+      <button class="btn ghost" onclick="pbCauHinh()">Nguồn dữ liệu</button>
+      <span class="mini">Cập nhật: ${PB.luc ? new Date(PB.luc).toLocaleString('vi-VN') : ''}</span>
+    </div>` + nut + than;
+}
+
+window.pbXuat = () => {
+  const bang = { cb: PB.cb, dv: PB.dv, canhbao: PB.cbao, khenche: PB.khen }[pbBang];
+  const ten = { cb: 'TheoChiBo', dv: 'TheoDangVien', canhbao: 'CanhBao', khenche: 'KhenNhacNho' }[pbBang];
+  if (!bang || !bang.dong.length) { toast('Chưa có dữ liệu để xuất.'); return; }
+  const rows = bang.dong.map(r => { const o = {}; bang.cot.forEach((c, i) => o[c] = r[i]); return o; });
+  const ws = XLSX.utils.json_to_sheet(rows), wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, ten.slice(0, 28));
+  XLSX.writeFile(wb, 'YKienPhatBieu_' + ten + '_' + new Date().toISOString().slice(0, 10) + '.xlsx');
+};
+/* ===PH7B-END=== */
 
 /* ================= INIT ================= */
 (async function(){
