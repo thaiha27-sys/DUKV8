@@ -1562,9 +1562,19 @@ window.m7ExportCheo=()=>{ const list=window.__m7cheo||[]; const months=[...Array
    Thứ tự ưu tiên: tham số ?pburl= trên địa chỉ → cấu hình đã lưu ở trình duyệt → hằng số này. */
 const PB_URL_CHUAN = 'https://script.google.com/macros/s/AKfycbzltoAmzWOgVd9o8iuLb_1PGUr-MBp_IGwyRtSgeKrB-sVrYV_ZcNqAFONDnZEbAb6fZw/exec';
 const _pbQS = new URLSearchParams(location.search);
-let PB_URL = (_pbQS.get('pburl') || localStorage.getItem('dukv8-pb-url') || PB_URL_CHUAN || '').trim();
+/* Thứ tự ưu tiên: tham số trên địa chỉ > HẰNG SỐ NHÚNG SẴN > cấu hình cũ lưu ở trình duyệt.
+   Phải để hằng số trước localStorage: máy nào từng bấm "Cấu hình nguồn dữ liệu" sẽ giữ URL/token
+   của bản triển khai CŨ, đè lên bản mới và sinh lỗi "Sai token truy cập" rất khó đoán. */
+if (PB_URL_CHUAN) {
+  const _cu = localStorage.getItem('dukv8-pb-url');
+  if (_cu && _cu.trim() !== PB_URL_CHUAN) {          // dọn cấu hình cũ đã lạc hậu
+    localStorage.removeItem('dukv8-pb-url');
+    localStorage.removeItem('dukv8-pb-token');
+  }
+}
+let PB_URL = (_pbQS.get('pburl') || PB_URL_CHUAN || localStorage.getItem('dukv8-pb-url') || '').trim();
 const PB_TOKEN_CHUAN = '000099';   // trùng CAUHINH!api_token — chỉ là rào chống dò quét
-let PB_TOKEN = (_pbQS.get('pbtoken') || localStorage.getItem('dukv8-pb-token') || PB_TOKEN_CHUAN).trim();
+let PB_TOKEN = (_pbQS.get('pbtoken') || PB_TOKEN_CHUAN || localStorage.getItem('dukv8-pb-token') || '').trim();
 /* Vé đăng nhập chi bộ: giữ trong phiên trình duyệt, đóng tab là mất. */
 let PB_VE = sessionStorage.getItem('dukv8-pb-ve') || '';
 let PB_QUYEN = sessionStorage.getItem('dukv8-pb-quyen') || 'khach';
