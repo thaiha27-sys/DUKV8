@@ -1563,7 +1563,12 @@ window.m7ExportCheo=()=>{ const list=window.__m7cheo||[]; const months=[...Array
 const PB_URL_CHUAN = 'https://script.google.com/macros/s/AKfycbzltoAmzWOgVd9o8iuLb_1PGUr-MBp_IGwyRtSgeKrB-sVrYV_ZcNqAFONDnZEbAb6fZw/exec';
 const _pbQS = new URLSearchParams(location.search);
 let PB_URL = (_pbQS.get('pburl') || localStorage.getItem('dukv8-pb-url') || PB_URL_CHUAN || '').trim();
-let PB_TOKEN = (_pbQS.get('pbtoken') || localStorage.getItem('dukv8-pb-token') || '').trim();
+const PB_TOKEN_CHUAN = '000099';   // trùng CAUHINH!api_token — chỉ là rào chống dò quét
+let PB_TOKEN = (_pbQS.get('pbtoken') || localStorage.getItem('dukv8-pb-token') || PB_TOKEN_CHUAN).trim();
+/* Vé đăng nhập chi bộ: giữ trong phiên trình duyệt, đóng tab là mất. */
+let PB_VE = sessionStorage.getItem('dukv8-pb-ve') || '';
+let PB_QUYEN = sessionStorage.getItem('dukv8-pb-quyen') || 'khach';
+let PB_CHIBO_VE = sessionStorage.getItem('dukv8-pb-chibo') || '';
 const PB = { tq: null, cb: null, dv: null, cbao: null, khen: null, yk: null, luc: 0, dangTai: false, loi: '' };
 /* ?pbcb=<tên chi bộ> — link riêng gửi từng chi bộ, mở ra là lọc sẵn chi bộ đó */
 let pbBang = 'cb', pbLocCB = (_pbQS.get('pbcb') || '').trim(), pbChiCanhBao = false;
@@ -1572,6 +1577,7 @@ if (pbLocCB) pbBang = 'ykien';
 function pbGoi(fn, ts) {
   let u = PB_URL + (PB_URL.includes('?') ? '&' : '?') + 'fn=' + encodeURIComponent(fn);
   if (PB_TOKEN) u += '&token=' + encodeURIComponent(PB_TOKEN);
+  if (PB_VE) u += '&ve=' + encodeURIComponent(PB_VE);
   for (const k in (ts || {})) if (ts[k] !== '' && ts[k] != null) u += '&' + k + '=' + encodeURIComponent(ts[k]);
   return jsonp(u).then(r => { if (!r || !r.ok) throw new Error((r && r.loi) || 'Máy chủ trả lỗi'); return r.duLieu; });
 }
@@ -1590,6 +1596,56 @@ async function pbNap(ep) {
   PB.dangTai = false;
   if (CUR === 'm7' && m7Tab === 'pb') VIEWS.m7();
 }
+
+/** Đăng nhập theo chi bộ: mật khẩu là tên bí thư chi bộ (gõ có dấu hay không đều được). */
+window.pbDangNhap = () => {
+  const dsCB = (PB.cb && PB.cb.dong || []).map(r => r[1]).filter(Boolean);
+  const bg = document.getElementById('modalBg'), box = document.getElementById('modalBox');
+  box.innerHTML = `<div class="mh">Đăng nhập để xem chi tiết<button onclick="closeModal()">×</button></div>
+    <div class="mb">
+      <div class="field"><label>Chi bộ</label>
+        <select id="pbDnCB" style="width:100%">
+          ${dsCB.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('')}
+          <option value="__QT__">— Quản trị (xem toàn Đảng bộ) —</option>
+        </select></div>
+      <div class="field"><label>Mật khẩu</label>
+        <input id="pbDnMK" type="password" style="width:100%" placeholder="Tên bí thư chi bộ"
+          onkeydown="if(event.key==='Enter')pbDangNhapGui()"></div>
+      <div class="mini" style="color:var(--muted,#666)">Mật khẩu của chi bộ là <b>họ tên bí thư chi bộ</b>.
+        Đăng nhập xong chỉ xem được dữ liệu của chi bộ mình, hiệu lực 6 giờ.</div>
+      <div id="pbDnLoi" class="mini" style="color:var(--red);margin-top:6px"></div>
+    </div>
+    <div class="mf"><button class="btn" onclick="closeModal()">Đóng</button>
+      <button class="btn primary" onclick="pbDangNhapGui()">Đăng nhập</button></div>`;
+  bg.classList.add('open');
+  setTimeout(() => { const o = document.getElementById('pbDnMK'); if (o) o.focus(); }, 100);
+};
+
+window.pbDangNhapGui = async () => {
+  const cbo = document.getElementById('pbDnCB').value;
+  const mk = document.getElementById('pbDnMK').value;
+  const oLoi = document.getElementById('pbDnLoi');
+  oLoi.textContent = 'Đang kiểm tra…';
+  try {
+    const d = await pbGoi('dangnhap', { chibo: cbo === '__QT__' ? '' : cbo, mk: mk });
+    PB_VE = d.ve; PB_QUYEN = d.quyen; PB_CHIBO_VE = d.chiBo;
+    sessionStorage.setItem('dukv8-pb-ve', PB_VE);
+    sessionStorage.setItem('dukv8-pb-quyen', PB_QUYEN);
+    sessionStorage.setItem('dukv8-pb-chibo', PB_CHIBO_VE);
+    closeModal();
+    toast('Đã đăng nhập: ' + d.chiBo);
+    if (d.quyen === 'chibo') pbLocCB = d.chiBo;
+    PB.tq = null; pbNap(true);
+  } catch (e) { oLoi.textContent = e.message; }
+};
+
+window.pbThoat = async () => {
+  try { await pbGoi('thoat', {}); } catch (e) { /* vé hết hạn cũng không sao */ }
+  PB_VE = ''; PB_QUYEN = 'khach'; PB_CHIBO_VE = '';
+  ['ve', 'quyen', 'chibo'].forEach(k => sessionStorage.removeItem('dukv8-pb-' + k));
+  toast('Đã thoát. Trang chỉ còn hiện số liệu tổng hợp.');
+  PB.tq = null; pbNap(true);
+};
 
 window.pbCauHinh = () => {
   const u = prompt('Dán đường dẫn /exec của bảng tính theo dõi ý kiến phát biểu:', PB_URL || '');
@@ -1702,12 +1758,19 @@ function pbView(tabsHTML) {
     than = pbVeBang(pbLoc(PB.khen, 4), [], r => String(r[1]).indexOf('BIỂU DƯƠNG') >= 0 ? '#EAF7EE' : 'var(--red-soft)');
   }
 
-  el.innerHTML = dau + kpi + `<div class="toolbar">
+  const nhac = PB_VE ? '' :
+    `<div class="note-banner">Đang xem ở chế độ công khai: <b>tên đảng viên viết tắt, không hiện nội dung ý kiến</b>.
+     Cấp ủy chi bộ bấm <b>Đăng nhập xem chi tiết</b> — mật khẩu là họ tên bí thư chi bộ.</div>`;
+  el.innerHTML = dau + kpi + nhac + `<div class="toolbar">
       ${locCB}
       ${pbBang === 'dv' ? `<label class="mini" style="display:flex;align-items:center;gap:6px">
         <input type="checkbox" ${pbChiCanhBao ? 'checked' : ''} onchange="pbLocCanhBao(this.checked)"> Chỉ hiện đảng viên có cảnh báo</label>` : ''}
       <button class="btn" onclick="pbTaiLai()">Tải lại</button>
       <button class="btn" onclick="pbXuat()">Xuất Excel</button>
+      ${PB_VE
+        ? `<span class="badge b-green">● ${esc(PB_CHIBO_VE || 'Đã đăng nhập')}</span>
+           <button class="btn" onclick="pbThoat()">Thoát</button>`
+        : `<button class="btn primary" onclick="pbDangNhap()">Đăng nhập xem chi tiết</button>`}
       <button class="btn" onclick="pbLinkChiBo()">Lấy link riêng cho chi bộ</button>
       <button class="btn ghost" onclick="pbCauHinh()">Nguồn dữ liệu</button>
       <span class="mini">Cập nhật: ${PB.luc ? new Date(PB.luc).toLocaleString('vi-VN') : ''}</span>
