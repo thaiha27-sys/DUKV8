@@ -1,0 +1,4 @@
+# Trang điều hành nội bộ Đảng ủy Chi cục Hải quan khu vực VIII
+# Không cho phép bất kỳ cỗ máy tìm kiếm nào thu thập, lập chỉ mục.
+User-agent: *
+Disallow: /
