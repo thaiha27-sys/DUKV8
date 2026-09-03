@@ -189,7 +189,21 @@ const SEED = {"m1": [{"nhiemvu": "Quyết định về việc công bố thủ t
 /* ====== CẤU HÌNH KẾT NỐI GOOGLE SHEET (dùng chung nhiều người) ======
    Dán URL /exec của Web App Apps Script vào GAS_URL để bật chế độ online.
    Để trống ('') = chạy offline (chỉ lưu trên máy này).                */
-let GAS_URL = localStorage.getItem('dukv8-gas-url') || 'https://script.google.com/macros/s/AKfycbxyv0wzAzVsF6o2v7OGWNmukA9IAE3n5UH2Hsh5sxs9NuNtyKfU5fadHVkR3aB6yEjeDg/exec';
+/* Địa chỉ backend chuẩn. Phải đặt hằng số TRƯỚC localStorage: máy nào từng bấm
+   "Kết nối Google Sheet" và lưu một URL cũ sẽ mãi gọi vào đó, trang không tải được dữ liệu
+   rồi âm thầm lùi về DỮ LIỆU MẪU nhúng trong file — rất khó đoán vì mã trong trang vẫn đúng.
+   Vì vậy: cấu hình cũ khác hằng số thì tự xóa. */
+const GAS_URL_CHUAN = 'https://script.google.com/macros/s/AKfycbxyv0wzAzVsF6o2v7OGWNmukA9IAE3n5UH2Hsh5sxs9NuNtyKfU5fadHVkR3aB6yEjeDg/exec';
+(function(){
+  try{
+    const cu = localStorage.getItem('dukv8-gas-url');
+    if(cu && cu.trim() !== GAS_URL_CHUAN){
+      console.warn('Bỏ cấu hình nguồn dữ liệu cũ:', cu);
+      localStorage.removeItem('dukv8-gas-url');
+    }
+  }catch(e){}
+})();
+let GAS_URL = localStorage.getItem('dukv8-gas-url') || GAS_URL_CHUAN;
 let ADMIN_PIN = sessionStorage.getItem('dukv8-pin') || '';
 
 /* Ánh xạ khóa nội bộ (S.*) <-> tên bảng trên Google Sheet.
