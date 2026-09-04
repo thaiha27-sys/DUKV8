@@ -1687,6 +1687,20 @@ window.pbLocCanhBao = (v) => { pbChiCanhBao = !!v; VIEWS.m7(); };
 function pbSo(x) { const n = parseFloat(x); return isNaN(n) ? 0 : n; }
 function pbPhanTram(x) { return Math.round(pbSo(x) * 100) + '%'; }
 
+/* Ngày trong JSON của Apps Script là chuỗi ISO theo GIỜ UTC: "2026-09-02T17:00:00.000Z"
+   chính là 3/9/2026 giờ Việt Nam. Trước 4/9/2026 bảng in nguyên chuỗi đó ra màn hình —
+   cấp ủy đọc không ra ngày nào, lại còn lùi một ngày nếu tự cắt 10 ký tự đầu.
+   Phải CỘNG BÙ 7 GIỜ rồi lấy phần UTC (dùng getDate() sẽ đổi theo múi giờ máy người xem). */
+const PB_ISO = /^-?\d{1,6}-\d{2}-\d{2}T\d{2}:\d{2}/;
+function pbNgay(v) {
+  if (typeof v !== 'string' || !PB_ISO.test(v)) return v;
+  const d = new Date(v);
+  if (isNaN(d.getTime())) return v;
+  const x = new Date(d.getTime() + 7 * 3600 * 1000);
+  const hai = n => (n < 10 ? '0' : '') + n;
+  return hai(x.getUTCDate()) + '/' + hai(x.getUTCMonth() + 1) + '/' + x.getUTCFullYear();
+}
+
 /** Dựng bảng HTML từ {cot, dong}; cot Ẩn: mảng chỉ số cột cần bỏ. */
 function pbVeBang(d, an, tomau) {
   if (!d || !d.dong || !d.dong.length) return '<div class="note-banner">Chưa có dữ liệu.</div>';
@@ -1698,7 +1712,7 @@ function pbVeBang(d, an, tomau) {
     const mau = tomau ? tomau(r) : '';
     h += `<tr${mau ? ` style="background:${mau}"` : ''}>` +
       cot.map(c => {
-        const v = r[c[1]];
+        const v = pbNgay(r[c[1]]);
         const so = (typeof v === 'number');
         return `<td${so ? ' class="num"' : ''}>${esc(v === null || v === undefined ? '' : v)}</td>`;
       }).join('') + '</tr>';
@@ -1818,7 +1832,7 @@ window.pbXuat = () => {
   const bang = { cb: PB.cb, dv: PB.dv, ykien: PB.yk, canhbao: PB.cbao, khenche: PB.khen }[pbBang];
   const ten = { cb: 'TheoChiBo', dv: 'TheoDangVien', ykien: 'NoiDungYKien', canhbao: 'CanhBao', khenche: 'KhenNhacNho' }[pbBang];
   if (!bang || !bang.dong.length) { toast('Chưa có dữ liệu để xuất.'); return; }
-  const rows = bang.dong.map(r => { const o = {}; bang.cot.forEach((c, i) => o[c] = r[i]); return o; });
+  const rows = bang.dong.map(r => { const o = {}; bang.cot.forEach((c, i) => o[c] = pbNgay(r[i])); return o; });
   const ws = XLSX.utils.json_to_sheet(rows), wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, ten.slice(0, 28));
   XLSX.writeFile(wb, 'YKienPhatBieu_' + ten + '_' + new Date().toISOString().slice(0, 10) + '.xlsx');
